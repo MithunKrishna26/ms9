@@ -1,72 +1,86 @@
 pipeline {
-  agent {
-    docker {
-      image 'python:3.11'
-      args '-u root:root'   // run as root so installing/venv works
-    }
-  }
+    agent any
 
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Prepare / Build') {
+            steps {
+                echo "Checking Python and creating virtual environment..."
+                sh '''
+                    # Ensure python3 exists
+                    command -v python3 || { echo "python3 not found"; exit 1; }
+
+                    # Create venv
+                    python3 -m venv venv
+
+                    # Activate venv
+                    . venv/bin/activate
+
+                    # Upgrade pip
+                    pip install --upgrade pip
+
+                    # Install dependencies
+                    pip install -r requirements.txt
+                '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo "Running Unit Tests (before deploy)..."
+                sh '''
+                    . venv/bin/activate
+                    python -m unittest discover -s .
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "Deploying application..."
+                sh '''
+                    mkdir -p python-app-deploy
+                    cp app.py python-app-deploy/
+                '''
+            }
+        }
+
+        stage('Run Application') {
+            steps {
+                echo "Running the Flask application..."
+                sh '''
+                    . venv/bin/activate
+                    nohup python python-app-deploy/app.py > python-app-deploy/app.log 2>&1 &
+                    echo $! > python-app-deploy/app.pid
+                '''
+            }
+        }
+
+        stage('Test Application') {
+            steps {
+                echo "Testing Application After Deploy..."
+                sh '''
+                    . venv/bin/activate
+                    sleep 2
+                    python -m unittest discover -s .
+                '''
+            }
+        }
+
     }
 
-    stage('Build') {
-      steps {
-        echo 'Creating virtual environment and installing dependencies...'
-        sh '''
-          python -m venv venv
-          . venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-        '''
-      }
+    post {
+        success {
+            echo "Pipeline completed successfully! 🎉"
+        }
+        failure {
+            echo "Pipeline FAILED ❌ — Check logs!"
+        }
     }
-
-    stage('Test') {
-      steps {
-        echo 'Running unit tests...'
-        sh '''
-          . venv/bin/activate
-          python -m unittest discover -s .
-        '''
-      }
-    }
-
-    stage('Deploy') {
-      steps {
-        echo 'Deploying application to workspace/python-app-deploy'
-        sh '''
-          mkdir -p ${WORKSPACE}/python-app-deploy
-          cp ${WORKSPACE}/app.py ${WORKSPACE}/python-app-deploy/
-        '''
-      }
-    }
-
-    stage('Run Application') {
-      steps {
-        echo 'Starting application in background'
-        sh '''
-          nohup ${WORKSPACE}/venv/bin/python ${WORKSPACE}/python-app-deploy/app.py > ${WORKSPACE}/python-app-deploy/app.log 2>&1 &
-          echo $! > ${WORKSPACE}/python-app-deploy/app.pid
-        '''
-      }
-    }
-
-    stage('Test Application') {
-      steps {
-        echo 'Testing running app via unit test (or curl)'
-        sh '''
-          # small wait so app listens
-          sleep 2
-          python -m unittest discover -s .
-        '''
-      }
-    }
-  }
-
-  post {
-    success { echo 'Pipeline completed successfully!' }
-    failure { echo 'Pipeline failed. Inspect console logs.' }
-  }
 }
